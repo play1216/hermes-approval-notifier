@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 — 2026-09-12
+- **Custom alert sound.** Drop a WAV named `approval.wav` next to the
+  plugin (or set `APPROVAL_NOTIFIER_SOUND` to any WAV path) and it loops
+  while an approval is pending — replacing the beep+alarm pair — and
+  stops the instant the approval is resolved. Missing file / non-Windows
+  falls back to the built-in beep+alarm automatically.
+  Convert any MP3 with the one-liner now documented in the README
+  (`ffmpeg ... apad=pad_dur=3` controls the chime interval).
+
 ## 1.0.0 — 2026-09-12
 First public release.
 

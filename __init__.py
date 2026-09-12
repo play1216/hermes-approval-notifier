@@ -1,5 +1,7 @@
 """approval-notifier — never miss or misread an approval prompt again.
 
+v1.1.0: custom alert sound (looping WAV, e.g. F1 radio chime) with
+automatic fallback to the built-in beep+alarm.
 v1.0.0: two-stage alerts with plain-language Chinese command explanations.
 
 Scenario: the user backgrounds the terminal running Hermes. When a
@@ -25,6 +27,7 @@ toasts are observers only. Never blocks the agent thread.
 
 import base64
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -135,6 +138,42 @@ def _beep_triple():
             print("\a" * 3, end="", flush=True)
         except Exception:
             pass
+
+# ------------------------------------------------------------------
+# Custom alert sound (v1.1.0). Drop a WAV file named approval.wav next
+# to this plugin — or point APPROVAL_NOTIFIER_SOUND at one — and it
+# loops (async, non-blocking) while an approval is pending, instead of
+# the built-in beep+alarm. mp3s must be converted first, e.g.:
+#   ffmpeg -i ring.mp3 -af "apad=pad_dur=3" -ac 1 -ar 44100 approval.wav
+# (the apad silence sets the repeat interval between chimes).
+# Winsound is Windows-only; on other platforms this degrades to the
+# legacy beep loop.
+# ------------------------------------------------------------------
+_SND_FILENAME, _SND_ASYNC, _SND_LOOP, _SND_PURGE = 0x20000, 0x1, 0x8, 0x0
+
+
+def _find_sound() -> str:
+    cand = (os.getenv("APPROVAL_NOTIFIER_SOUND", "") or
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "approval.wav"))
+    return cand if cand.lower().endswith(".wav") and os.path.isfile(cand) else ""
+
+
+def _play_sound_loop(path: str) -> bool:
+    try:
+        import winsound
+        winsound.PlaySound(path, _SND_FILENAME | _SND_ASYNC | _SND_LOOP)
+        return True
+    except Exception:
+        return False
+
+
+def _stop_sound():
+    try:
+        import winsound
+        winsound.PlaySound(None, _SND_PURGE)
+    except Exception:
+        pass
 
 
 def _send_toast(title: str, body: str, *, alarm: bool = True) -> None:
@@ -255,19 +294,30 @@ def _explain_worker(command: str, reason_cn: str, my_gen: int):
 
 
 def _alert_worker(command: str, reason_cn: str, my_gen: int):
-    """Stage-1: immediate toast + beeps, then repeating beeps until resolved."""
+    """Stage-1: immediate toast + alarm, keep alerting until resolved."""
+    wav = _find_sound()
+    has_sound = _play_sound_loop(wav) if wav else False
     try:
-        _send_toast("⏰ Hermes 审批请求", f"⚠ {reason_cn}\n命令: {command}")
+        _send_toast("⏰ Hermes 审批请求", f"⚠ {reason_cn}\n命令: {command}",
+                    alarm=not has_sound)
     except Exception as exc:
         logger.debug("approval-notifier toast failed: %s", exc)
-    try:
-        _beep_triple()
-    except Exception:
-        pass
+    if not has_sound:
+        try:
+            _beep_triple()
+        except Exception:
+            pass
     # Stage 2 runs in its own thread so a slow LLM never delays the alarm.
     threading.Thread(target=_explain_worker, args=(command, reason_cn, my_gen),
                      daemon=True).start()
     deadline = time.time() + _BELL_MAX_S
+    if has_sound:
+        # Custom WAV loops on its own; just police the hard deadline.
+        while not _stop.wait(_BELL_INTERVAL_S):
+            if time.time() >= deadline:
+                break
+        _stop_sound()
+        return
     while not _stop.wait(_BELL_INTERVAL_S):
         if time.time() >= deadline:
             break
@@ -295,8 +345,10 @@ def on_pre_approval_request(**kwargs):
 
 
 def on_post_approval_response(**kwargs):
-    """post_approval_response hook: stop the alarm, suppress pending stage-2."""
+    """post_approval_response hook: stop alarm sound/beeps, suppress
+    pending stage-2 toasts."""
     _stop.set()
+    _stop_sound()
 
 
 def register(ctx):

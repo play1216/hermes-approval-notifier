@@ -59,6 +59,9 @@ already fired and the alarm keeps going until you resolve the prompt.
 ## Features
 
 - 🚨 **Toast + alarm + 15s beep loop** until the approval is resolved — impossible to miss
+- 🔊 **Your own alert sound** — drop in an `approval.wav` (e.g. an F1 radio
+  chime) and it loops instead of the built-in alarm, stopping the moment
+  you resolve the prompt
 - 🈶 **Instant Chinese risk labels** — static map, zero latency, works with any/offline model
 - 🧠 **Plain-language command breakdown** from your active model — what it does, what it risks
 - 🪡 **Observer-only by design** — never touches the approval decision itself, never blocks the agent thread
@@ -125,6 +128,22 @@ before the prompt auto-denies:
 ```bash
 hermes config set approvals.timeout 300
 ```
+
+### Custom alert sound / 自定义提示音
+
+默认警报是蜂鸣+系统铃声。想换成任何你喜欢的铃声（比如 F1 电台提示音）：
+
+```bash
+# mp3 → 带 3 秒静音间隔的循环 wav（apad 的 pad_dur 控制两声之间的间隔）
+ffmpeg -i your-ringtone.mp3 -af "apad=pad_dur=3" -ac 1 -ar 44100 approval.wav
+```
+
+把 `approval.wav` 放到插件目录（与 `__init__.py` 同级）即可，无需重启以外的
+任何配置；也可以用环境变量 `APPROVAL_NOTIFIER_SOUND` 指向任意 wav 路径。
+文件不存在或非 Windows 平台时自动回退到内置蜂鸣警报。声音在审批被
+解决（批准/拒绝/超时）的瞬间停止。
+The WAV loops while a prompt is pending and stops the instant it is
+resolved. `approval.wav` is git-ignored on purpose — bring your own ringtone.
 
 ## How it works
 
