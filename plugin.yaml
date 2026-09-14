@@ -1,5 +1,5 @@
 name: approval-notifier
-version: 1.2.1
+version: 1.2.2
 description: "Never miss or misread a dangerous-command approval prompt in Hermes Agent: instant Chinese risk labels printed in the terminal, a fixed 5-field AI breakdown of every flagged command (object/action/consequence/reversibility/advice), your own looping alert sound, and Toast follow-ups. Uses your active model, no extra API key."
 author: "WHW"
 homepage: "https://github.com/play1216/hermes-approval-notifier"

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.2 — 2026-09-14
+- **Late explanations are no longer lost.** If the model endpoint is
+  congested and the breakdown finishes after you already answered the
+  prompt, it is now still printed, titled
+  「📖 AI 解读（审批已结束，以下为补发，供事后核对）」— so a slow
+  relay never costs you the explanation. Only superseded-by-a-newer-
+  request results are dropped.
+- **Dedicated explanation model (optional):** set `auxiliary.approval`
+  (`model` / `base_url` / `api_key`) in config.yaml to route breakdowns
+  through a faster/free endpoint instead of the main model — recommended
+  when your main relay is slow. Falls back to the active main model.
+
 ## 1.2.1 — 2026-09-14
 - Plain-language rewrite of every stage-1 label: "recursive delete" now
   reads 「连同子文件夹里的所有文件一起删除」 instead of jargon

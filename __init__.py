@@ -1,5 +1,7 @@
 """approval-notifier — never miss or misread an approval prompt again.
 
+v1.2.2: late AI explanations are delivered (marked 补发) instead of
+silently dropped; optional auxiliary.approval model for fast breakdowns.
 v1.2.0: the fixed 5-field Chinese breakdown now prints INTO the terminal
 while the y/n prompt is waiting (toasts become secondary delivery).
 v1.1.0: custom alert sound (looping WAV, e.g. F1 radio chime) with
@@ -330,8 +332,16 @@ def _explain_command(command: str, reason_cn: str):
     try:
         from hermes_cli.config import load_config
         from agent.auxiliary_client import call_llm
-        m = (load_config() or {}).get("model", {}) or {}
-        if not (m.get("base_url") and m.get("api_key") and m.get("default")):
+        cfg = load_config() or {}
+        # Prefer an explicitly configured auxiliary.approval model (e.g. a
+        # fast free endpoint) so explanations survive a congested main
+        # relay; fall back to the active main model.
+        aux = (cfg.get("auxiliary", {}) or {}).get("approval", {}) or {}
+        m = cfg.get("model", {}) or {}
+        model = aux.get("model") or m.get("default")
+        base_url = aux.get("base_url") or m.get("base_url")
+        api_key = aux.get("api_key") or m.get("api_key")
+        if not (base_url and api_key and model):
             return None
         prompt = (
             "你是中文安全助手,服务对象是完全不懂命令行的用户。下面这条终端命令被 "
@@ -347,9 +357,9 @@ def _explain_command(command: str, reason_cn: str):
         )
         response = call_llm(
             task=None,
-            model=m.get("default"),
-            base_url=m.get("base_url"),
-            api_key=m.get("api_key"),
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2, max_tokens=900, timeout=_LLM_TIMEOUT_S,
         )
@@ -382,8 +392,8 @@ def _explain_command(command: str, reason_cn: str):
                          + "、".join(missing) + "。命令:\n"
                          + command[:500])
                 r2 = call_llm(
-                    task=None, model=m.get("default"),
-                    base_url=m.get("base_url"), api_key=m.get("api_key"),
+                    task=None, model=model,
+                    base_url=base_url, api_key=api_key,
                     messages=[
                         {"role": "user", "content": prompt},
                         {"role": "assistant", "content": text[:800]},
@@ -410,23 +420,29 @@ def _explain_command(command: str, reason_cn: str):
         return None
 
 
-def _explain_worker(command: str, reason_cn: str, my_gen: int):
+def _explain_worker(command: str, reason_cn: str, my_gen: int, started: float):
     """Stage-2 thread: fixed-path explanation → terminal box (primary)
-    + toast (secondary). Skipped when resolved or superseded."""
+    + toast (secondary). v1.2.2: late results are still delivered (marked
+    as 补发) — a slow endpoint should not cost the user the explanation
+    they were promised. Superseded-by-newer-request results are dropped."""
     try:
         fields = _explain_command(command, reason_cn)
-        if _stop.is_set():
-            return                     # already resolved — don't spam
-        if fields is None:
-            _term_print(_box("📖 AI 解读暂不可用（模型超时/不可达），请凭上方底稿决定",
-                             []))
-            return
         with _gen_lock:
-            if _gen != my_gen:
-                return                 # a newer approval superseded this one
+            superseded = _gen != my_gen
+        if superseded:
+            return                 # a newer approval took over the display
+        if fields is None:
+            if not _stop.is_set():
+                _term_print(_box("📖 AI 解读暂不可用（模型超时/不可达），请凭上方底稿决定",
+                                 []))
+            return
+        late = _stop.is_set()
+        title = ("📖 AI 解读（审批已结束，以下为补发，供事后核对）"
+                 if late else "📖 AI 解读（仅供参考，决定权在你）")
         lines = [f"{f}: {t}" for f, t in fields]
-        _term_print(_box("📖 AI 解读（仅供参考，决定权在你）", lines))
-        _send_toast("📖 Hermes 命令解读", "\n".join(lines), alarm=False)
+        _term_print(_box(title, lines))
+        if not late:
+            _send_toast("📖 Hermes 命令解读", "\n".join(lines), alarm=False)
     except Exception as exc:
         logger.debug("approval-notifier: explain worker failed: %s", exc)
 
@@ -446,7 +462,8 @@ def _alert_worker(command: str, reason_cn: str, my_gen: int):
         except Exception:
             pass
     # Stage 2 runs in its own thread so a slow LLM never delays the alarm.
-    threading.Thread(target=_explain_worker, args=(command, reason_cn, my_gen),
+    threading.Thread(target=_explain_worker,
+                     args=(command, reason_cn, my_gen, time.time()),
                      daemon=True).start()
     deadline = time.time() + _BELL_MAX_S
     if has_sound:

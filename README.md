@@ -137,6 +137,18 @@ before the prompt auto-denies:
 hermes config set approvals.timeout 300
 ```
 
+If the AI breakdown is too slow behind your main model's endpoint, pin a
+faster/free model for explanations (falls back to the main model when unset):
+
+```yaml
+# config.yaml
+auxiliary:
+  approval:
+    model: glm-4-flash
+    base_url: https://api.z.ai/api/paas/v4
+    api_key: <your key>
+```
+
 ### Custom alert sound / 自定义提示音
 
 默认警报是蜂鸣+系统铃声。想换成任何你喜欢的铃声（比如 F1 电台提示音）：
