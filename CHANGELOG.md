@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 — 2026-09-14
+- **In-terminal fixed-thought-path output.** Every approval now prints a
+  Chinese box directly into the terminal (same channel the core modal
+  uses), not only a Toast: stage 1 = instant static risk label + raw
+  command; stage 2 = the model's fixed 5-field breakdown —
+  对象 / 动作 / 后果 / 可逆性 / 建议 — printed under the prompt while
+  you decide. Toasts remain as secondary delivery.
+- **Robust field parsing**: half/full-width colon variants, bullet
+  prefixes, `</think>` stripping; missing fields get one cheap
+  follow-up LLM pass; still-missing fields render as
+  "(模型未给出,按最坏情况对待)" — fail-toward-safety.
+- LLM unavailable → terminal prints "AI 解读暂不可用" so you never
+  wait in silence; stage-1 label is always present.
+
 ## 1.1.0 — 2026-09-12
 - **Custom alert sound.** Drop a WAV named `approval.wav` next to the
   plugin (or set `APPROVAL_NOTIFIER_SOUND` to any WAV path) and it loops

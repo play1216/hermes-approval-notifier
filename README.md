@@ -33,32 +33,39 @@ default. But two things go wrong in practice:
 approval-notifier fixes both:
 
 ```
-┌──────────────────────────────┐   ← Stage 1, instant, works offline
-│ ⏰ Hermes 审批请求            │
-│ ⚠ 递归删除目录                │
-│ 命令: rm -rf "D:/data/cache"  │
-└──────────────────────────────┘
-        +  looping alarm sound  +  console beeps every 15s
+终端里（每次审批都打印，v1.2）:
 
-┌──────────────────────────────┐   ← Stage 2, ~3–10s later, via your model
-│ 📖 Hermes 命令解读            │
-│ 做什么: 递归删除 D:/data/cache │
-│ 缓存目录及其所有内容。        │
-│ 风险: 高危。文件将被永久删除， │
-│ 无法恢复。                    │
-└──────────────────────────────┘
+╔══ ⚠ 审批请求 ══════════════════════════════════════════════╗
+║ 风险类型: 递归删除目录                                      ║
+║ 命令: rm -rf "D:/data/cache"                                ║
+║ AI 正在解读命令，几秒后显示在下方…                          ║
+╚════════════════════════════════════════════════════════════╝
+        +  your alert sound loops  +  Toast (stage 1)  +  15s beeps
+
+╔══ 📖 AI 解读（仅供参考，决定权在你） ══════════════════════╗
+║ 对象: F:/STOCK 目录下的所有 CSV 行情文件                    ║
+║ 动作: 递归删除该目录及全部子目录内容                        ║
+║ 后果: 30个币种两年半的K线数据永久丢失                       ║
+║ 可逆性: 不可撤销。需重新下载约40GB                          ║
+║ 建议: 拒绝。该数据盘被标记为只读                            ║
+╚════════════════════════════════════════════════════════════╝
 ```
 
 Stage 1 is a deterministic EN→CN map of **all 60** built-in
 `DANGEROUS_PATTERNS` / `HARDLINE_PATTERNS` rule names — instant, no network.
-Stage 2 asks your active main model (freshly read from `config.yaml`, so
-model switches are honored) for a concrete explanation of *this* command.
-If the LLM fails or times out, stage 2 is silently skipped — stage 1 has
-already fired and the alarm keeps going until you resolve the prompt.
+Stage 2 walks your active main model (freshly read from `config.yaml`, so
+model switches are honored) through a **fixed 5-field thought path**:
+对象(what it touches) → 动作(what happens) → 后果(worst case) →
+可逆性(can it be undone) → 建议(放行/拒绝/请人工确认). Missing fields get
+one follow-up pass; anything still missing renders as
+"(模型未给出,按最坏情况对待)". If the LLM is down entirely, the terminal
+says "AI 解读暂不可用" — stage 1 has already fired and the alarm keeps
+going until you resolve the prompt.
 
 ## Features
 
 - 🚨 **Toast + alarm + 15s beep loop** until the approval is resolved — impossible to miss
+- 📖 **Fixed 5-field AI breakdown printed IN the terminal** (对象/动作/后果/可逆性/建议) — read it where you answer the prompt
 - 🔊 **Your own alert sound** — drop in an `approval.wav` (e.g. an F1 radio
   chime) and it loops instead of the built-in alarm, stopping the moment
   you resolve the prompt

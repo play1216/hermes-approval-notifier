@@ -1,5 +1,7 @@
 """approval-notifier — never miss or misread an approval prompt again.
 
+v1.2.0: the fixed 5-field Chinese breakdown now prints INTO the terminal
+while the y/n prompt is waiting (toasts become secondary delivery).
 v1.1.0: custom alert sound (looping WAV, e.g. F1 radio chime) with
 automatic fallback to the built-in beep+alarm.
 v1.0.0: two-stage alerts with plain-language Chinese command explanations.
@@ -221,17 +223,58 @@ def _send_toast(title: str, body: str, *, alarm: bool = True) -> None:
 
 
 # ------------------------------------------------------------------
-# Stage 2: LLM-generated Chinese explanation
+# Terminal rendering (v1.2.0): fixed-thought-path Chinese blocks are
+# printed INTO the terminal while the y/n prompt is waiting, not only
+# pushed as toasts. cli._cprint is the same channel the core approval
+# modal itself uses to write during the wait (timeout line), so it is
+# safe against the prompt_toolkit UI; plain print is the fallback.
+# ------------------------------------------------------------------
+_print_lock = threading.Lock()
+_BOX_W = 72
+
+
+def _term_print(lines):
+    """Print a list of lines to the terminal, serialized across threads."""
+    with _print_lock:
+        try:
+            try:
+                from cli import _cprint
+                for ln in lines:
+                    _cprint(ln)
+            except Exception:
+                sys.stdout.write("\n".join(lines) + "\n")
+                sys.stdout.flush()
+        except Exception as exc:
+            logger.debug("approval-notifier: term print failed: %s", exc)
+
+
+def _box(title, lines):
+    """Wrap lines into a light box with a titled top border."""
+    import textwrap
+    out = [f"╔══ {title} " + "═" * max(2, _BOX_W - 5 - len(title))]
+    for ln in lines:
+        for seg in textwrap.wrap(str(ln), width=_BOX_W - 6) or [""]:
+            out.append(f"║ {seg}")
+    out.append("╚" + "═" * _BOX_W)
+    return out
+
+
+# ------------------------------------------------------------------
+# Stage 2: LLM-generated Chinese explanation (fixed 5-step path)
 # ------------------------------------------------------------------
 
+_EXPLAIN_FIELDS = ("对象", "动作", "后果", "可逆性", "建议")
+
+
 def _explain_command(command: str, reason_cn: str):
-    """Ask the user's active main model for a 2-line Chinese explanation.
+    """Ask the user's active main model for the fixed 5-line breakdown:
+    对象 / 动作 / 后果 / 可逆性 / 建议.
 
     Calls agent.auxiliary_client.call_llm directly with the model section
     read fresh from config (so model switches are picked up). Deliberately
     NOT ctx.llm/PluginLlm: with task=None its "auto" chain misroutes to a
     relay that rejects the key (401 Invalid api_key format, verified
-    2026-09-12). Returns (action_line, risk_line) or None on any failure.
+    2026-09-12). Returns list of "(field, text)" lines or None on failure.
     """
     try:
         from hermes_cli.config import load_config
@@ -240,11 +283,16 @@ def _explain_command(command: str, reason_cn: str):
         if not (m.get("base_url") and m.get("api_key") and m.get("default")):
             return None
         prompt = (
-            "你是中文安全助手,服务对象是不懂命令行的用户。下面这条终端命令被 Hermes "
-            f"审批拦截,标记原因:{reason_cn}。\n\n命令:\n{command[:_LLM_MAX_INPUT_CHARS]}\n\n"
-            "请严格按以下格式回复两行,不要任何其他文字、不要代码块:\n"
-            "做什么: <一句中文,不超过45字,说明具体操作对象和路径>\n"
-            "风险: <高危|中危|低危>。<一句中文,不超过45字,说明批准后可能的后果>"
+            "你是中文安全助手,服务对象是完全不懂命令行的用户。下面这条终端命令被 "
+            f"Hermes 审批拦截,规则标记:{reason_cn}。\n\n命令:\n"
+            f"{command[:_LLM_MAX_INPUT_CHARS]}\n\n"
+            "按以下固定顺序分析并输出,严格5行,每行以字段名紧跟半角冒号开头"
+            "(格式:对象:xxx,冒号前后不得有空格),不要任何其他文字、不要代码块、不要序号:\n"
+            "对象:命令作用的具体文件/目录/服务/远端,引用真实路径\n"
+            "动作:批准后会发生的操作,一句中文\n"
+            "后果:最坏情况,一句中文,不超过40字\n"
+            "可逆性:可撤销|部分可撤销|不可撤销 三选一,加一句中文说明恢复办法或代价\n"
+            "建议:放行|拒绝|请人工确认 三选一,加一句中文理由,不超过30字"
         )
         response = call_llm(
             task=None,
@@ -252,7 +300,7 @@ def _explain_command(command: str, reason_cn: str):
             base_url=m.get("base_url"),
             api_key=m.get("api_key"),
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.2, max_tokens=700, timeout=_LLM_TIMEOUT_S,
+            temperature=0.2, max_tokens=900, timeout=_LLM_TIMEOUT_S,
         )
         text = ""
         try:
@@ -262,33 +310,72 @@ def _explain_command(command: str, reason_cn: str):
         # reasoning models wrap output in <think>...</think>
         if "</think>" in text:
             text = text.split("</think>")[-1]
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
-        action = next((l for l in lines if l.startswith("做什么")), "")
-        risk = next((l for l in lines if l.startswith("风险")), "")
-        if not action and len(lines) >= 2:
-            action, risk = lines[0], lines[1]
-        if not action and not risk:
+        parsed = {}
+        for raw in (l.strip().lstrip("-* 　") for l in text.splitlines() if l.strip()):
+            for f in _EXPLAIN_FIELDS:
+                if f in parsed:
+                    continue
+                for head in (f + ":", f + "：", f + " :", f + " ："):
+                    if raw.startswith(head):
+                        parsed[f] = raw[len(head):].strip()
+                        break
+        if not parsed:
             return None
-        return (action or "做什么: (模型未说明)", risk or "风险: (模型未评级)")
+        # Missing fields get ONE cheap follow-up pass (models drop lines
+        # occasionally); still-missing ones fall back to a static hint.
+        missing = [f for f in _EXPLAIN_FIELDS if f not in parsed]
+        if missing and len(missing) <= 3:
+            try:
+                reask = ("把刚才答案里缺失的字段各补一行,格式'字段名:内容'"
+                         "(字段名后紧跟冒号无空格)。只补这些:"
+                         + "、".join(missing) + "。命令:\n"
+                         + command[:500])
+                r2 = call_llm(
+                    task=None, model=m.get("default"),
+                    base_url=m.get("base_url"), api_key=m.get("api_key"),
+                    messages=[
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": text[:800]},
+                        {"role": "user", "content": reask}],
+                    temperature=0.0, max_tokens=400, timeout=12)
+                t2 = ""
+                try:
+                    t2 = r2.choices[0].message.content or ""
+                except Exception:
+                    pass
+                if "</think>" in t2:
+                    t2 = t2.split("</think>")[-1]
+                for raw in (l.strip().lstrip("-* 　") for l in t2.splitlines() if l.strip()):
+                    for f in missing:
+                        for head in (f + ":", f + "：", f + " :", f + " ："):
+                            if raw.startswith(head) and f not in parsed:
+                                parsed[f] = raw[len(head):].strip()
+            except Exception:
+                pass
+        return [(f, parsed.get(f, "(模型未给出,按最坏情况对待)"))
+                for f in _EXPLAIN_FIELDS]
     except Exception as exc:
         logger.debug("approval-notifier: LLM explain failed: %s", exc)
         return None
 
 
 def _explain_worker(command: str, reason_cn: str, my_gen: int):
-    """Stage-2 thread: generate explanation, toast it IF the approval is
-    still pending and this is still the latest request."""
+    """Stage-2 thread: fixed-path explanation → terminal box (primary)
+    + toast (secondary). Skipped when resolved or superseded."""
     try:
-        pair = _explain_command(command, reason_cn)
-        if pair is None:
-            return
+        fields = _explain_command(command, reason_cn)
         if _stop.is_set():
             return                     # already resolved — don't spam
+        if fields is None:
+            _term_print(_box("📖 AI 解读暂不可用（模型超时/不可达），请凭上方底稿决定",
+                             []))
+            return
         with _gen_lock:
             if _gen != my_gen:
                 return                 # a newer approval superseded this one
-        _send_toast("📖 Hermes 命令解读",
-                    f"{pair[0]}\n{pair[1]}", alarm=False)
+        lines = [f"{f}: {t}" for f, t in fields]
+        _term_print(_box("📖 AI 解读（仅供参考，决定权在你）", lines))
+        _send_toast("📖 Hermes 命令解读", "\n".join(lines), alarm=False)
     except Exception as exc:
         logger.debug("approval-notifier: explain worker failed: %s", exc)
 
@@ -328,7 +415,8 @@ def _alert_worker(command: str, reason_cn: str, my_gen: int):
 
 
 def on_pre_approval_request(**kwargs):
-    """pre_approval_request hook: alarm now, Chinese explanation async."""
+    """pre_approval_request hook: instant Chinese base-block in the
+    terminal + toast + alarm; fixed-path AI explanation follows async."""
     command = kwargs.get("command", "") or ""
     description = kwargs.get("description", "") or ""
     surface = kwargs.get("surface", "")
@@ -336,6 +424,13 @@ def on_pre_approval_request(**kwargs):
     logger.info("approval-notifier: approval requested (surface=%s, %s)",
                 surface, reason_cn)
     _stop.clear()
+    # Stage 1 in-terminal: deterministic, zero latency — always visible
+    # even if the model/endpoint is down.
+    _term_print(_box("⚠ 审批请求", [
+        f"风险类型: {reason_cn}",
+        f"命令: {command[:300]}" + ("…" if len(command) > 300 else ""),
+        "AI 正在解读命令，几秒后显示在下方…",
+    ]))
     with _gen_lock:
         global _gen
         _gen += 1
