@@ -10,7 +10,7 @@ the command *actually does* and what could go wrong — using **your currently
 active model**, no extra API key.
 
 为 Hermes Agent 打造的审批提醒插件：危险命令弹窗出现的那一刻，Windows
-通知中心立即弹出「人话版」风险提示（内置 60 条规则的中文映射表，零延迟），
+通知中心立即弹出「人话版」风险提示（内置全部 80 条安全规则的中文映射表，零延迟），
 几秒后再推送一条由你当前主模型生成的中文解读——这条命令到底做了什么、
 批准后可能的后果。不需要额外 API Key。
 
@@ -51,8 +51,9 @@ approval-notifier fixes both:
 ╚════════════════════════════════════════════════════════════╝
 ```
 
-Stage 1 is a deterministic EN→CN map of **all 60** built-in
-`DANGEROUS_PATTERNS` / `HARDLINE_PATTERNS` rule names — instant, no network.
+Stage 1 is a deterministic EN→CN map of **all 80** built-in
+`DANGEROUS_PATTERNS` / `HARDLINE_PATTERNS` rule names (incl. PowerShell /
+Windows / Docker rules) — plain language, not jargon, instant, no network.
 Stage 2 walks your active main model (freshly read from `config.yaml`, so
 model switches are honored) through a **fixed 5-field thought path**:
 对象(what it touches) → 动作(what happens) → 后果(worst case) →

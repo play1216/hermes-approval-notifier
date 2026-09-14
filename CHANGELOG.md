@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1 — 2026-09-14
+- Plain-language rewrite of every stage-1 label: "recursive delete" now
+  reads 「连同子文件夹里的所有文件一起删除」 instead of jargon
+  「递归删除目录」.
+- Full rule coverage: added the 50+ Windows / PowerShell / Docker /
+  registry / sudo rules the core detects on this platform (previously
+  untranslated). Verified against the live `approval.py` +
+  `approval_detection.py` rule lists — 100% mapped.
+
 ## 1.2.0 — 2026-09-14
 - **In-terminal fixed-thought-path output.** Every approval now prints a
   Chinese box directly into the terminal (same channel the core modal
