@@ -154,8 +154,8 @@ auxiliary:
 默认警报是蜂鸣+系统铃声。想换成任何你喜欢的铃声（比如 F1 电台提示音）：
 
 ```bash
-# mp3 → 带 3 秒静音间隔的循环 wav（apad 的 pad_dur 控制两声之间的间隔）
-ffmpeg -i your-ringtone.mp3 -af "apad=pad_dur=3" -ac 1 -ar 44100 approval.wav
+# mp3 → wav 尾部垫静音（pad_dur 控制响铃间隔：铃声~0.7s + 静音29.3s ≈ 30秒一响）
+ffmpeg -i your-ringtone.mp3 -af "apad=pad_dur=29.3" -ac 1 -ar 44100 approval.wav
 ```
 
 把 `approval.wav` 放到插件目录（与 `__init__.py` 同级）即可，无需重启以外的

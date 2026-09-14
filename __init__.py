@@ -199,8 +199,9 @@ def _beep_triple():
 # to this plugin — or point APPROVAL_NOTIFIER_SOUND at one — and it
 # loops (async, non-blocking) while an approval is pending, instead of
 # the built-in beep+alarm. mp3s must be converted first, e.g.:
-#   ffmpeg -i ring.mp3 -af "apad=pad_dur=3" -ac 1 -ar 44100 approval.wav
-# (the apad silence sets the repeat interval between chimes).
+#   ffmpeg -i ring.mp3 -af "apad=pad_dur=29.3" -ac 1 -ar 44100 approval.wav
+# (the apad silence sets the repeat interval between chimes — ~30s is a
+# polite default; 3s gives an insistent alarm).
 # Winsound is Windows-only; on other platforms this degrades to the
 # legacy beep loop.
 # ------------------------------------------------------------------
